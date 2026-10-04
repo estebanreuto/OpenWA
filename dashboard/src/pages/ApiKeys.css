@@ -67,9 +67,50 @@
 }
 
 .api-keys-page .name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
+}
+
+.api-keys-page .name-cell small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.api-keys-page .api-key-user-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.9rem 0;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.api-keys-page .api-key-user-toggle input {
+  margin: 0.15rem 0 0;
+  accent-color: var(--primary);
+}
+
+.api-keys-page .api-key-user-fields {
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-light);
+}
+
+.api-keys-page .api-key-user-fields > label {
+  display: block;
+  margin: 0.5rem 0 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .api-keys-page .key-cell {

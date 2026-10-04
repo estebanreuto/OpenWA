@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Trans, useTranslation } from 'react-i18next';
 import {
   useTable,
@@ -30,12 +31,15 @@ import {
   useRevokeApiKeyMutation,
   useSessionsQuery,
   useUpdateApiKeyMutation,
+  queryKeys,
 } from '../hooks/queries';
 import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
 import { SessionScopePicker } from '../components/SessionScopePicker';
 import { useToast } from '../hooks/useToast';
 import { copyToClipboard } from '../utils/clipboard';
+import { savedApiKey } from '../utils/authStorage';
+import { apiKeyApi } from '../services/api';
 import {
   apiKeyDraft,
   apiKeyPatch,
@@ -54,12 +58,23 @@ import './ApiKeys.css';
 
 const roleNames = ['admin', 'operator', 'viewer'] as const;
 
-const emptyKeyForm = { name: '', role: 'operator', allowedSessions: [] as string[], ips: '', chats: '', expires: '' };
+const emptyKeyForm = {
+  name: '',
+  role: 'operator',
+  allowedSessions: [] as string[],
+  ips: '',
+  chats: '',
+  expires: '',
+  createDashboardUser: false,
+  dashboardUsername: '',
+  dashboardPassword: '',
+  dashboardPasswordConfirm: '',
+};
 
 // The key this dashboard signed in with: the list only carries each key's prefix, which is the first
 // 12 characters of the raw key.
 function isSignedInKey(apiKey: ApiKey): boolean {
-  return !!apiKey.keyPrefix && !!sessionStorage.getItem('openwa_api_key')?.startsWith(apiKey.keyPrefix);
+  return !!apiKey.keyPrefix && !!savedApiKey()?.startsWith(apiKey.keyPrefix);
 }
 
 // The first IP or chat line the gateway would refuse, so the form can name it instead of the bare
@@ -211,6 +226,7 @@ const columnHelper = createColumnHelper<typeof features, ApiKey>();
 export function ApiKeys() {
   const { t } = useTranslation();
   const toast = useToast();
+  const queryClient = useQueryClient();
   useDocumentTitle(t('apiKeys.title'));
   const { data: apiKeys = [], isLoading: loading, error: apiKeysError } = useApiKeysQuery();
   const { data: sessions = [] } = useSessionsQuery();
@@ -224,6 +240,10 @@ export function ApiKeys() {
   const [copied, setCopied] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
   const [editDraft, setEditDraft] = useState<ApiKeyDraft | null>(null);
+  const [editDashboardUserEnabled, setEditDashboardUserEnabled] = useState(false);
+  const [editDashboardUsername, setEditDashboardUsername] = useState('');
+  const [editDashboardPassword, setEditDashboardPassword] = useState('');
+  const [savingDashboardUser, setSavingDashboardUser] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ type: 'delete' | 'revoke'; id: string; name: string } | null>(
     null,
   );
@@ -258,6 +278,20 @@ export function ApiKeys() {
     const scoped = canScopeSessions(newKey.role);
     const allowedIps = parseScopeList(newKey.ips);
     const allowedChats = scoped ? normalizeChatScope(newKey.chats) : [];
+    if (newKey.createDashboardUser) {
+      if (newKey.dashboardUsername.trim().length < 3) {
+        toast.error(t('apiKeys.user.title'), t('apiKeys.user.usernameTooShort'));
+        return;
+      }
+      if (newKey.dashboardPassword.length < 12) {
+        toast.error(t('apiKeys.user.title'), t('apiKeys.user.passwordTooShort'));
+        return;
+      }
+      if (newKey.dashboardPassword !== newKey.dashboardPasswordConfirm) {
+        toast.error(t('apiKeys.user.title'), t('apiKeys.user.passwordMismatch'));
+        return;
+      }
+    }
     try {
       const created = await createMutation.mutateAsync({
         name: newKey.name,
@@ -269,6 +303,20 @@ export function ApiKeys() {
       });
       setCreatedKey(created.apiKey || null);
       setNewKey(emptyKeyForm);
+      if (newKey.createDashboardUser) {
+        setSavingDashboardUser(true);
+        try {
+          await apiKeyApi.setDashboardUser(created.id, {
+            username: newKey.dashboardUsername.trim(),
+            password: newKey.dashboardPassword,
+          });
+          await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys });
+        } catch (err) {
+          toast.error(t('apiKeys.user.title'), err instanceof Error ? err.message : t('apiKeys.user.saveFailed'));
+        } finally {
+          setSavingDashboardUser(false);
+        }
+      }
     } catch (err) {
       console.error('Failed to create:', err);
       toast.error(t('apiKeys.createBtn'), err instanceof Error ? err.message : t('common.unknownError'));
@@ -278,11 +326,17 @@ export function ApiKeys() {
   const openEdit = (apiKey: ApiKey) => {
     setEditingKey(apiKey);
     setEditDraft(apiKeyDraft(apiKey));
+    setEditDashboardUserEnabled(Boolean(apiKey.dashboardUsername));
+    setEditDashboardUsername(apiKey.dashboardUsername ?? '');
+    setEditDashboardPassword('');
   };
 
   const closeEdit = () => {
     setEditingKey(null);
     setEditDraft(null);
+    setEditDashboardUserEnabled(false);
+    setEditDashboardUsername('');
+    setEditDashboardPassword('');
   };
 
   const handleSave = async () => {
@@ -297,11 +351,29 @@ export function ApiKeys() {
     try {
       // An unchanged Save is not sent at all (see apiKeyPatch).
       const data = apiKeyPatch(editingKey, editDraft);
-      if (Object.keys(data).length === 0) {
-        closeEdit();
-        return;
+      if (Object.keys(data).length > 0) await updateMutation.mutateAsync({ id: editingKey.id, data });
+
+      const currentUsername = editingKey.dashboardUsername ?? '';
+      const nextUsername = editDashboardUsername.trim();
+      const userChanged = editDashboardUserEnabled
+        ? nextUsername !== currentUsername || editDashboardPassword.length > 0
+        : Boolean(currentUsername);
+      if (userChanged) {
+        setSavingDashboardUser(true);
+        try {
+          if (editDashboardUserEnabled) {
+            await apiKeyApi.setDashboardUser(editingKey.id, {
+              username: nextUsername,
+              ...(editDashboardPassword ? { password: editDashboardPassword } : {}),
+            });
+          } else {
+            await apiKeyApi.removeDashboardUser(editingKey.id);
+          }
+          await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys });
+        } finally {
+          setSavingDashboardUser(false);
+        }
       }
-      await updateMutation.mutateAsync({ id: editingKey.id, data });
       closeEdit();
     } catch (err) {
       console.error('Failed to update key:', err);
@@ -314,8 +386,24 @@ export function ApiKeys() {
     editDraft && editingKey ? limitErrors(editDraft.role, editDraft.ips, editDraft.chats, editingKey) : null;
   // The gateway requires a name of at least 3 characters; the input stops at its 100-character limit.
   const canCreate =
-    !createMutation.isPending && newKey.name.trim().length >= 3 && newErrors.ip === null && newErrors.chat === null;
-  const canSave = !updateMutation.isPending && editErrors?.ip === null && editErrors.chat === null;
+    !createMutation.isPending &&
+    !savingDashboardUser &&
+    newKey.name.trim().length >= 3 &&
+    newErrors.ip === null &&
+    newErrors.chat === null &&
+    (!newKey.createDashboardUser ||
+      (newKey.dashboardUsername.trim().length >= 3 &&
+        newKey.dashboardPassword.length >= 12 &&
+        newKey.dashboardPassword === newKey.dashboardPasswordConfirm));
+  const canSave =
+    !updateMutation.isPending &&
+    !savingDashboardUser &&
+    editErrors?.ip === null &&
+    editErrors.chat === null &&
+    (!editDashboardUserEnabled ||
+      (editDashboardUsername.trim().length >= 3 &&
+        (Boolean(editingKey?.dashboardUsername) || editDashboardPassword.length >= 12) &&
+        (!editDashboardPassword || editDashboardPassword.length >= 12)));
 
   const handleRevoke = async (id: string) => {
     try {
@@ -354,7 +442,14 @@ export function ApiKeys() {
       columnHelper.columns([
         columnHelper.accessor('name', {
           header: () => t('apiKeys.columns.name'),
-          cell: info => <span className="name-cell">{info.getValue()}</span>,
+          cell: info => (
+            <span className="name-cell">
+              <span>{info.getValue()}</span>
+              {info.row.original.dashboardUsername && (
+                <small>{t('apiKeys.user.userLabel', { username: info.row.original.dashboardUsername })}</small>
+              )}
+            </span>
+          ),
         }),
         columnHelper.accessor('keyPrefix', {
           id: 'key',
@@ -532,7 +627,11 @@ export function ApiKeys() {
                   {t('common.cancel')}
                 </button>
                 <button className="btn-primary" onClick={handleCreate} disabled={!canCreate}>
-                  {createMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : t('common.create')}
+                  {createMutation.isPending || savingDashboardUser ? (
+                    <Loader2 className="animate-spin" size={16} />
+                  ) : (
+                    t('common.create')
+                  )}
                 </button>
               </>
             ) : undefined
@@ -591,6 +690,50 @@ export function ApiKeys() {
                   </option>
                 ))}
               </select>
+              <label className="api-key-user-toggle">
+                <input
+                  type="checkbox"
+                  checked={newKey.createDashboardUser}
+                  onChange={e => setNewKey({ ...newKey, createDashboardUser: e.target.checked })}
+                />
+                <span>{t('apiKeys.user.addUser')}</span>
+              </label>
+              {newKey.createDashboardUser && (
+                <div className="api-key-user-fields">
+                  <label htmlFor="ak-user-name">{t('apiKeys.user.username')}</label>
+                  <input
+                    id="ak-user-name"
+                    type="text"
+                    autoComplete="username"
+                    maxLength={100}
+                    value={newKey.dashboardUsername}
+                    onChange={e => setNewKey({ ...newKey, dashboardUsername: e.target.value })}
+                  />
+                  <label htmlFor="ak-user-password">{t('apiKeys.user.password')}</label>
+                  <input
+                    id="ak-user-password"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={12}
+                    maxLength={128}
+                    value={newKey.dashboardPassword}
+                    onChange={e => setNewKey({ ...newKey, dashboardPassword: e.target.value })}
+                  />
+                  <label htmlFor="ak-user-password-confirm">{t('apiKeys.user.confirmPassword')}</label>
+                  <input
+                    id="ak-user-password-confirm"
+                    type="password"
+                    autoComplete="new-password"
+                    value={newKey.dashboardPasswordConfirm}
+                    onChange={e => setNewKey({ ...newKey, dashboardPasswordConfirm: e.target.value })}
+                  />
+                  {newKey.dashboardPasswordConfirm.length > 0 &&
+                    newKey.dashboardPassword !== newKey.dashboardPasswordConfirm && (
+                      <span className="key-field-hint error">{t('apiKeys.user.passwordMismatch')}</span>
+                    )}
+                  <span className="key-field-hint">{t('apiKeys.user.passwordHint')}</span>
+                </div>
+              )}
               {canScopeSessions(newKey.role) && (
                 <SessionScopePicker
                   sessions={sessions}
@@ -627,7 +770,11 @@ export function ApiKeys() {
                 {t('common.cancel')}
               </button>
               <button className="btn-primary" onClick={() => void handleSave()} disabled={!canSave}>
-                {updateMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : t('apiKeys.sessions.save')}
+                {updateMutation.isPending || savingDashboardUser ? (
+                  <Loader2 className="animate-spin" size={16} />
+                ) : (
+                  t('apiKeys.sessions.save')
+                )}
               </button>
             </>
           }
@@ -654,6 +801,42 @@ export function ApiKeys() {
               </option>
             ))}
           </select>
+          <label className="api-key-user-toggle">
+            <input
+              type="checkbox"
+              checked={editDashboardUserEnabled}
+              disabled={savingDashboardUser}
+              onChange={e => setEditDashboardUserEnabled(e.target.checked)}
+            />
+            <span>{t('apiKeys.user.enableUser')}</span>
+          </label>
+          {editDashboardUserEnabled && (
+            <div className="api-key-user-fields">
+              <label htmlFor="ak-edit-user-name">{t('apiKeys.user.username')}</label>
+              <input
+                id="ak-edit-user-name"
+                type="text"
+                autoComplete="username"
+                maxLength={100}
+                value={editDashboardUsername}
+                disabled={savingDashboardUser}
+                onChange={e => setEditDashboardUsername(e.target.value)}
+              />
+              <label htmlFor="ak-edit-user-password">{t('apiKeys.user.newPassword')}</label>
+              <input
+                id="ak-edit-user-password"
+                type="password"
+                autoComplete="new-password"
+                minLength={editDashboardUsername ? 0 : 12}
+                maxLength={128}
+                placeholder={t('apiKeys.user.passwordUnchanged')}
+                value={editDashboardPassword}
+                disabled={savingDashboardUser}
+                onChange={e => setEditDashboardPassword(e.target.value)}
+              />
+              <span className="key-field-hint">{t('apiKeys.user.editHint')}</span>
+            </div>
+          )}
           {canScopeSessions(editDraft.role) && (
             <SessionScopePicker
               sessions={sessions}

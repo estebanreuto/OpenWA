@@ -194,6 +194,13 @@ docker compose -f docker-compose.dev.yml up -d
 then use it to sign in to the dashboard and as the `X-API-Key` header wherever this README shows
 `YOUR_API_KEY`. Later boots log only a masked prefix. See [API Key](docs/README.md#api-key).
 
+**Dashboard username and password.** Sign in once with an admin API key. The login screen then lets you
+create its dashboard username and password. In **API Keys**, you can also create a dashboard user for each
+key or edit/remove an existing login. Credentials are stored as password hashes in the local authentication
+database; no dashboard login secrets need to be added to `.env`. Each login keeps that key's role and access
+limits. “Remember me” stores the selected credential in this browser for up to 30 days; without it, the
+session ends when the browser tab is closed or after 8 hours for password login, whichever comes first.
+
 > **Using Podman instead of Docker?**
 > Podman rootless mode requires the socket to be running and `DOCKER_HOST` to be set:
 >

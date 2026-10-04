@@ -13,7 +13,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/rmyndharis/openwa
   # Defaults to the chart's appVersion when empty.
-  tag: ""
+  tag: ''
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -35,7 +35,7 @@ env:
 # (persists on the PVC) — NOTES.txt after install shows how to read it.
 # If a key exists in both env and secretEnv, the secret value wins (envFrom ordering).
 secretEnv:
-  API_MASTER_KEY: ""
+  API_MASTER_KEY: ''
 
 # Note: a sha256 of the rendered Secret is published as a pod annotation so that changing
 # secretEnv restarts the pod — without it the new value would never reach the running
@@ -48,7 +48,7 @@ secretEnv:
 #
 # Name of an existing, operator-managed Secret to load via envFrom instead of the
 # chart-managed one. When set, secretEnv is ignored and no Secret is created.
-existingSecret: ""
+existingSecret: ''
 
 service:
   type: ClusterIP
@@ -60,7 +60,7 @@ persistence:
   # Empty storageClass means the cluster's default StorageClass; the PVC pends if
   # the cluster has none.
   size: 10Gi
-  storageClass: ""
+  storageClass: ''
   accessModes:
     - ReadWriteOnce
 
@@ -128,7 +128,7 @@ containerSecurityContext:
 
 ingress:
   enabled: false
-  className: ""
+  className: ''
   annotations: {}
   host: openwa.example.com
   paths:
@@ -141,7 +141,7 @@ ingress:
 
 serviceAccount:
   create: true
-  name: ""
+  name: ''
   annotations: {}
 
 # With replicaCount 1, minAvailable: 1 blocks voluntary eviction (node drains hang
@@ -160,7 +160,7 @@ serviceMonitor:
   additionalLabels: {}
   # Secret holding the METRICS_TOKEN value for bearer auth.
   bearerTokenSecret:
-    name: ""
+    name: ''
     key: token
 
 nodeSelector: {}

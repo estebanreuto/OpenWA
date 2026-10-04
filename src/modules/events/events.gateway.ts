@@ -13,6 +13,7 @@ import { OnModuleDestroy } from '@nestjs/common';
 import { createLogger } from '../../common/services/logger.service';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth/auth.service';
+import { DashboardAuthService } from '../auth/dashboard-auth.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction } from '../audit/entities/audit-log.entity';
 import { resolveCorsPolicy } from '../../config/bootstrap-security';
@@ -155,6 +156,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     private readonly authService: AuthService,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
+    private readonly dashboardAuth?: DashboardAuthService,
   ) {
     this.rateLimits = readWsRateLimitConfig();
     this.frameLimiter = new TokenBucketLimiter(this.rateLimits.framePerSecond, this.rateLimits.frameBurst);
@@ -250,7 +252,9 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   private isSnapshotExpired(client: Socket, now: number): boolean {
     const snapshot = (client.data as { apiKey?: Pick<ApiKey, 'expiresAt'> } | undefined)?.apiKey;
     const expiry = apiKeyExpiryTime(snapshot?.expiresAt);
-    return expiry !== null && expiry <= now;
+    const dashboardExpiry = (client.data as { dashboardSessionExpiresAt?: number | null } | undefined)
+      ?.dashboardSessionExpiresAt;
+    return (expiry !== null && expiry <= now) || (dashboardExpiry != null && dashboardExpiry <= now);
   }
 
   /** Whether a subscribe ever granted this socket something under a key other than its snapshot. */
@@ -345,10 +349,12 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
     // Accept the key only via Socket.IO's `auth` field or the header — never the query string, which
     // leaks the credential into proxy/access logs. (The deprecated `?apiKey=` fallback was removed.)
-    const handshakeAuth = client.handshake.auth as { apiKey?: string } | undefined;
+    const handshakeAuth = client.handshake.auth as { apiKey?: string; dashboardSession?: string } | undefined;
     const apiKey = handshakeAuth?.apiKey || (client.handshake.headers['x-api-key'] as string);
+    const dashboardSession =
+      handshakeAuth?.dashboardSession || (client.handshake.headers['x-openwa-session'] as string);
 
-    if (!apiKey) {
+    if (!apiKey && !dashboardSession) {
       this.logger.warn(`Client ${client.id} rejected: No API key provided`);
       void this.auditService.logWarn(AuditAction.API_KEY_AUTH_FAILED, {
         ipAddress: clientIp,
@@ -365,7 +371,10 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       // path is the catch below — a separate `if (!validKey)` branch here was dead code. The clientIp
       // is passed so an IP-restricted key (allowedIps set) is ENFORCED rather than blanket-rejected
       // for "Client IP could not be determined".
-      const validKey = await this.authService.validateApiKey(apiKey, clientIp);
+      const validKey = dashboardSession
+        ? await this.dashboardAuth?.validateSession(dashboardSession, clientIp)
+        : await this.authService.validateApiKey(apiKey, clientIp);
+      if (!validKey) throw new Error('Dashboard session authentication is unavailable');
 
       // A chat-restricted key cannot yet be filtered on a live event stream (chat scoping of the
       // event surface is the follow-up slice), so refuse the handshake rather than stream every
@@ -402,8 +411,14 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
       // Store the validated key AND the raw key — the raw key lets handleSubscribe
       // RE-validate on each subscription so a key revoked mid-connection is caught.
-      (client.data as { apiKey: unknown; rawApiKey: string }).apiKey = validKey;
-      (client.data as { rawApiKey: string }).rawApiKey = apiKey;
+      (client.data as { apiKey: unknown; rawCredential: string; dashboardSession: boolean }).apiKey = validKey;
+      (client.data as { rawCredential: string }).rawCredential = dashboardSession || apiKey;
+      (client.data as { rawApiKey?: string }).rawApiKey = apiKey;
+      (client.data as { dashboardSession: boolean }).dashboardSession = Boolean(dashboardSession);
+      if (dashboardSession) {
+        (client.data as { dashboardSessionExpiresAt?: number | null }).dashboardSessionExpiresAt =
+          (await this.dashboardAuth?.sessionExpiresAt(dashboardSession)) ?? null;
+      }
       this.trackSocket(validKey.id, client);
       // The handshake window is charged pre-auth to keep an unauthenticated flood off the DB. This
       // one turned out to be authentic, so give the slot back: the window then bounds FAILED
@@ -529,11 +544,16 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     // revoked/expired after connect must not be able to keep opening new subscriptions.
     // The clientIp is re-resolved (trusted-proxy-aware) so an IP-restricted key is enforced
     // here too, not just at connect.
-    const rawApiKey = (client.data as { rawApiKey?: string }).rawApiKey;
+    const rawCredential = (client.data as { rawCredential?: string; dashboardSession?: boolean }).rawCredential;
+    const isDashboardSession = (client.data as { dashboardSession?: boolean }).dashboardSession === true;
     const clientIp = this.resolveClientIp(client);
     let subscriberKey: ApiKey | null;
     try {
-      subscriberKey = rawApiKey ? await this.authService.validateApiKey(rawApiKey, clientIp) : null;
+      subscriberKey = rawCredential
+        ? isDashboardSession
+          ? ((await this.dashboardAuth?.validateSession(rawCredential, clientIp)) ?? null)
+          : await this.authService.validateApiKey(rawCredential, clientIp)
+        : null;
     } catch {
       subscriberKey = null;
     }

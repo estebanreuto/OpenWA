@@ -10,6 +10,14 @@ import { RoleProvider } from './components/RoleProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { API_BASE_URL } from './services/api';
 import { clearActorState, isUserRole, resolveStartupValidation } from './utils/authLifecycle';
+import {
+  clearSavedCredential,
+  credentialHeaders,
+  readSavedCredential,
+  sameCredential,
+  saveCredential,
+  type AuthCredential,
+} from './utils/authStorage';
 import './App.css';
 
 const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
@@ -39,14 +47,12 @@ function AppContent() {
   // handleLogin stores a fresh key would re-fire the startup re-validation effect below and
   // double the /auth/validate request on every sign-in — the effect is for genuine page
   // refreshes with a saved key only.
-  const [savedKey] = useState(() => sessionStorage.getItem('openwa_api_key'));
-  const [isAuthenticated, setIsAuthenticated] = useState(!!savedKey);
-  const [, setApiKey] = useState(savedKey || '');
+  const [savedCredential] = useState(() => readSavedCredential());
+  const [isAuthenticated, setIsAuthenticated] = useState(!!savedCredential);
   const { setRole, role, setEngineType } = useRole();
 
-  const handleLogin = (key: string, validatedRole?: string, engineType?: string) => {
-    setApiKey(key);
-    sessionStorage.setItem('openwa_api_key', key);
+  const handleLogin = (credential: AuthCredential, validatedRole?: string, engineType?: string) => {
+    saveCredential(credential);
 
     // The login page's validate response already carried the role, so no second /auth/validate
     // round-trip is needed here. An absent or unrecognized role falls back to viewer, the
@@ -58,11 +64,10 @@ function AppContent() {
   };
 
   const handleLogout = useCallback(() => {
-    setApiKey('');
     setIsAuthenticated(false);
     setRole(null);
     setEngineType(null);
-    sessionStorage.removeItem('openwa_api_key');
+    clearSavedCredential();
     // Wipe the React Query cache too: it is keyed by resource, not actor, so without a full
     // clear a logout → login in the same tab with a different key/scope shows the previous
     // actor's sessions/messages/apiKeys/audit rows.
@@ -71,18 +76,18 @@ function AppContent() {
 
   // Re-validate and refresh the role on mount if already authenticated
   useEffect(() => {
-    if (!savedKey) return;
+    if (!savedCredential) return;
 
     fetch(`${API_BASE_URL}/auth/validate`, {
       method: 'POST',
-      headers: { 'X-API-Key': savedKey },
+      headers: credentialHeaders(savedCredential),
     })
       .then(async res => {
         const decision = resolveStartupValidation(res.status, await res.json().catch(() => null));
         // Nothing cancels this request on logout. If the user has since signed out, or back in with
         // another key, the answer is about a key no longer in use: applying it would hand the new
         // session the old key's role, or log it out over the old key's 401.
-        if (sessionStorage.getItem('openwa_api_key') !== savedKey) return;
+        if (!sameCredential(readSavedCredential(), savedCredential)) return;
         if (decision.action === 'logout') {
           handleLogout();
         } else if (decision.action === 'role') {
@@ -94,7 +99,7 @@ function AppContent() {
         // Network failure (API unreachable): keep the cached role so a transient outage at
         // page load doesn't eject the user — an explicit 401/403 above still logs out.
       });
-  }, [savedKey, setRole, setEngineType, handleLogout]);
+  }, [savedCredential, setRole, setEngineType, handleLogout]);
 
   const loadingFallback = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>

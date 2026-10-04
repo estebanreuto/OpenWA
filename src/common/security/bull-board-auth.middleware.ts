@@ -2,6 +2,7 @@ import { Injectable, NestMiddleware, UnauthorizedException, ForbiddenException }
 import { ConfigService } from '@nestjs/config';
 import { Request, Response, NextFunction } from 'express';
 import { AuthService, UnresolvedApiKeyException } from '../../modules/auth/auth.service';
+import { DashboardAuthService } from '../../modules/auth/dashboard-auth.service';
 import { ApiKeyRole } from '../../modules/auth/entities/api-key.entity';
 import { AuditService } from '../../modules/audit/audit.service';
 import { AuditAction } from '../../modules/audit/entities/audit-log.entity';
@@ -48,6 +49,7 @@ export class BullBoardAuthMiddleware implements NestMiddleware {
     private readonly configService: ConfigService,
     private readonly auditService?: AuditService,
     ipRateLimiter?: KeyRateLimiter,
+    private readonly dashboardAuth?: DashboardAuthService,
   ) {
     // Default to MCP's pre-auth per-IP policy (max 120 / 60s) when not supplied. Tests inject a tight
     // limiter; production (instantiated manually in main.ts) takes the default.
@@ -68,11 +70,16 @@ export class BullBoardAuthMiddleware implements NestMiddleware {
       this.ipRateLimiter.check(limiterKeyForIp(clientIp));
 
       const rawKey = this.extractKey(req);
-      if (!rawKey) {
+      const dashboardSession = req.headers['x-openwa-session'];
+      if (!rawKey && !(typeof dashboardSession === 'string' && dashboardSession)) {
         throw new UnresolvedApiKeyException('API key is required to access the queue dashboard');
       }
 
-      const apiKey = await this.authService.validateApiKey(rawKey, clientIp);
+      const apiKey =
+        typeof dashboardSession === 'string' && dashboardSession
+          ? await this.dashboardAuth?.validateSession(dashboardSession, clientIp)
+          : await this.authService.validateApiKey(rawKey!, clientIp);
+      if (!apiKey) throw new UnresolvedApiKeyException('Dashboard session is invalid or expired');
 
       // Stamp the resolved actor before the two authorization checks below, matching ApiKeyGuard.
       // Both of those throw, and the catch that audits the denial cannot see `apiKey` — it is a const

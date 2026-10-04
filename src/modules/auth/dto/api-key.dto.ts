@@ -80,6 +80,9 @@ export class ApiKeyResponseDto {
   @ApiProperty()
   name!: string;
 
+  @ApiPropertyOptional({ description: 'Dashboard username assigned to this API key' })
+  dashboardUsername?: string;
+
   @ApiProperty({
     description: 'First 12 characters of the key (for identification)',
   })

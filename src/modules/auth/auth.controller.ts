@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Req, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Req, HttpCode, HttpStatus, Optional } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
@@ -7,6 +7,21 @@ import { RequireRole, CurrentApiKey, RequireUnscopedKey } from './decorators/aut
 import { type ApiKey, ApiKeyRole } from './entities/api-key.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction } from './../audit/entities/audit-log.entity';
+import { DashboardAuthService } from './dashboard-auth.service';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+
+class DashboardUserDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(100)
+  username!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  password?: string;
+}
 
 @ApiTags('auth')
 @Controller('auth/api-keys')
@@ -17,6 +32,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly auditService: AuditService,
+    @Optional() private readonly dashboardAuth?: DashboardAuthService,
   ) {}
 
   // Build the request-context block for an API-key lifecycle audit entry: who did it (the admin key from
@@ -96,9 +112,12 @@ export class AuthController {
   })
   async findAll(): Promise<ApiKeyResponseDto[]> {
     const keys = await this.authService.findAll();
+    const usernames =
+      (await this.dashboardAuth?.usernamesForKeys(keys.map(key => key.id))) ?? new Map<string, string>();
     return keys.map(k => ({
       id: k.id,
       name: k.name,
+      dashboardUsername: usernames.get(k.id),
       keyPrefix: k.keyPrefix,
       role: k.role,
       allowedIps: k.allowedIps || undefined,
@@ -126,6 +145,7 @@ export class AuthController {
     return {
       id: k.id,
       name: k.name,
+      dashboardUsername: await this.dashboardAuth?.findUsername(k.id),
       keyPrefix: k.keyPrefix,
       role: k.role,
       allowedIps: k.allowedIps || undefined,
@@ -137,6 +157,24 @@ export class AuthController {
       usageCount: k.usageCount,
       createdAt: k.createdAt,
     };
+  }
+
+  @Put(':id/dashboard-user')
+  @RequireRole(ApiKeyRole.ADMIN)
+  @ApiOperation({ summary: 'Create or update the dashboard user assigned to an API key' })
+  async setDashboardUser(@Param('id') id: string, @Body() dto: DashboardUserDto): Promise<{ username: string }> {
+    await this.authService.findOne(id);
+    await this.dashboardAuth!.configure(id, dto.username, dto.password);
+    return { username: dto.username.trim() };
+  }
+
+  @Delete(':id/dashboard-user')
+  @RequireRole(ApiKeyRole.ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove dashboard username and password from an API key' })
+  async removeDashboardUser(@Param('id') id: string): Promise<void> {
+    await this.authService.findOne(id);
+    await this.dashboardAuth!.remove(id);
   }
 
   @Put(':id')
@@ -169,6 +207,7 @@ export class AuthController {
     return {
       id: k.id,
       name: k.name,
+      dashboardUsername: await this.dashboardAuth?.findUsername(k.id),
       keyPrefix: k.keyPrefix,
       role: k.role,
       allowedIps: k.allowedIps || undefined,
@@ -195,6 +234,7 @@ export class AuthController {
   async delete(@Param('id') id: string, @Req() req: Request, @CurrentApiKey() actor?: ApiKey): Promise<void> {
     const target = await this.authService.findOne(id);
     await this.authService.delete(id);
+    await this.dashboardAuth?.remove(id);
     await this.auditService.logInfo(AuditAction.API_KEY_DELETED, {
       ...this.auditContext(req, actor),
       metadata: { targetKeyId: id, targetKeyName: target?.name },

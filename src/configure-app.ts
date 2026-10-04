@@ -166,7 +166,7 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
     },
     credentials: corsPolicy.credentials,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-API-Key', 'Authorization', 'X-Request-ID'],
+    allowedHeaders: ['Content-Type', 'X-API-Key', 'X-OpenWA-Session', 'Authorization', 'X-Request-ID'],
     // The throttlers are named (short/medium/long, plus ingress-ip on ingress), so @nestjs/throttler
     // suffixes every rate-limit header with the throttler name; IngressService emits the per-instance
     // bucket's headers under the same `-instance` suffix. Expose the suffixed names so browser clients

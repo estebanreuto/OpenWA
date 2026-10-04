@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { API_ORIGIN } from '../services/api';
 import { resolveSocketUrl, warnIfInsecureHttpUrl } from '../utils/urlSecurity';
+import { credentialHeaders, readSavedCredential } from '../utils/authStorage';
 
 interface SessionStatusEvent {
   sessionId: string;
@@ -163,11 +164,10 @@ export function useWebSocket(events: WebSocketEvents = {}) {
   const connect = useCallback(() => {
     if (socketRef.current?.connected) return;
 
-    // Get API key from sessionStorage (same as api.ts)
-    const apiKey = sessionStorage.getItem('openwa_api_key');
+    const credential = readSavedCredential();
 
-    if (!apiKey) {
-      console.warn('[WebSocket] No API key found, skipping connection');
+    if (!credential) {
+      console.warn('[WebSocket] No dashboard credential found, skipping connection');
       return;
     }
 
@@ -177,14 +177,12 @@ export function useWebSocket(events: WebSocketEvents = {}) {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      // Send the key via `auth` (and a header for proxies). NOT via `query` — a key in the
+      // Send the credential via `auth` (and a header for proxies). NOT via `query` — a key in the
       // handshake URL leaks into access logs / Referer. The gateway reads auth first.
       auth: {
-        apiKey,
+        ...(credential.type === 'apiKey' ? { apiKey: credential.value } : { dashboardSession: credential.value }),
       },
-      extraHeaders: {
-        'X-API-Key': apiKey,
-      },
+      extraHeaders: credentialHeaders(credential),
     });
 
     socketRef.current.on('connect', () => {

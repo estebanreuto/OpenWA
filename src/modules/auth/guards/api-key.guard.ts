@@ -5,11 +5,13 @@ import {
   UnauthorizedException,
   ForbiddenException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { AuthService, UnresolvedApiKeyException } from '../auth.service';
+import { DashboardAuthService } from '../dashboard-auth.service';
 import { ChatScopeService } from '../chat-scope.service';
 import { BULK_MESSAGES_MAX } from '../../message/dto/bulk-message.dto';
 import { ApiKey, ApiKeyRole } from '../entities/api-key.entity';
@@ -37,6 +39,7 @@ export class ApiKeyGuard implements CanActivate {
     private readonly configService: ConfigService,
     private readonly auditService: AuditService,
     private readonly chatScope: ChatScopeService,
+    @Optional() private readonly dashboardAuth?: DashboardAuthService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -76,8 +79,10 @@ export class ApiKeyGuard implements CanActivate {
 
   private async authorize(request: Request, context: ExecutionContext): Promise<boolean> {
     const apiKeyHeader = this.extractApiKey(request);
+    const dashboardHeader = request.headers['x-openwa-session'];
+    const dashboardToken = typeof dashboardHeader === 'string' ? dashboardHeader : undefined;
 
-    if (!apiKeyHeader) {
+    if (!apiKeyHeader && !dashboardToken) {
       throw new UnresolvedApiKeyException('API key is required');
     }
 
@@ -99,7 +104,12 @@ export class ApiKeyGuard implements CanActivate {
     const clientIp = this.getClientIp(request);
 
     // Validate API key
-    const apiKey = await this.authService.validateApiKey(apiKeyHeader, clientIp, sessionId);
+    const apiKey = dashboardToken
+      ? await this.dashboardAuth?.validateSession(dashboardToken, clientIp, sessionId)
+      : apiKeyHeader
+        ? await this.authService.validateApiKey(apiKeyHeader, clientIp, sessionId)
+        : undefined;
+    if (!apiKey) throw new UnresolvedApiKeyException('Dashboard session is invalid or expired');
 
     // Stamp the resolved actor into the per-request async context so downstream audit log writes —
     // which fire from services deep in the call stack without DI access to the key — can attribute

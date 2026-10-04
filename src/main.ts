@@ -33,6 +33,7 @@ import {
 import { BullBoardAuthMiddleware } from './common/security/bull-board-auth.middleware';
 import { invalidTrustedProxies } from './common/utils/ip';
 import { AuthService } from './modules/auth/auth.service';
+import { DashboardAuthService } from './modules/auth/dashboard-auth.service';
 import { AuditService } from './modules/audit/audit.service';
 import { Request, Response, NextFunction } from 'express';
 import { RedisIoAdapter } from './modules/events/redis-io.adapter';
@@ -207,12 +208,14 @@ async function bootstrap() {
   // Protect the Bull Board queue UI (/api/admin/queues). It is mounted by
   // @bull-board/nestjs as raw Express middleware that the global ApiKeyGuard
   // does not cover; registering this before app.listen() ensures it runs ahead
-  // of the Bull Board router. Requires a valid ADMIN API key. The middleware also
+  // of the Bull Board router. Requires an ADMIN API key or a dashboard session. The middleware also
   // writes the audit trail for this mount (auth failures + queue mutations).
   const bullBoardAuth = new BullBoardAuthMiddleware(
     app.get(AuthService),
     app.get(ConfigService),
     app.get(AuditService),
+    undefined,
+    app.get(DashboardAuthService),
   );
   app.use('/api/admin/queues', (req: Request, res: Response, next: NextFunction) => {
     void bullBoardAuth.use(req, res, next);

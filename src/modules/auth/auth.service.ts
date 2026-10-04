@@ -505,6 +505,26 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       throw new UnresolvedApiKeyException('Invalid API key');
     }
 
+    return this.validateApiKeyRecord(apiKey, clientIp, sessionId, recordUsage);
+  }
+
+  async validateApiKeyById(
+    id: string,
+    clientIp?: string,
+    sessionId?: string,
+    { recordUsage = true }: { recordUsage?: boolean } = {},
+  ): Promise<ApiKey> {
+    const apiKey = await this.apiKeyRepository.findOne({ where: { id } });
+    if (!apiKey) throw new UnresolvedApiKeyException('API key is no longer available');
+    return this.validateApiKeyRecord(apiKey, clientIp, sessionId, recordUsage);
+  }
+
+  private async validateApiKeyRecord(
+    apiKey: ApiKey,
+    clientIp?: string,
+    sessionId?: string,
+    recordUsage = true,
+  ): Promise<ApiKey> {
     // Name the key before any check below can refuse it, so the audit row every caller writes for a
     // revoked, expired, IP- or session-refused key says which key to revoke or re-scope. No-op
     // outside a request scope (WebSocket frames, workers).

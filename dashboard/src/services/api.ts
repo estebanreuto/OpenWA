@@ -4,6 +4,7 @@
 import { warnIfInsecureHttpUrl } from '../utils/urlSecurity';
 import { isKeyUnusable } from '../utils/authLifecycle';
 import { fetchAllPages } from '../utils/fetchAllPages';
+import { clearSavedCredential, credentialHeaders } from '../utils/authStorage';
 
 // Resolve the API base URL. By default this is the same-origin relative path '/api',
 // correct when the dashboard and API are served from the same origin (the default
@@ -197,6 +198,7 @@ export interface TemplatePayload {
 export interface ApiKey {
   id: string;
   name: string;
+  dashboardUsername?: string;
   keyPrefix: string;
   role: 'admin' | 'operator' | 'viewer';
   allowedIps?: string[];
@@ -725,7 +727,7 @@ async function handleErrorResponse<T>(response: Response): Promise<T> {
   // toast (a 504 keeps its own), and statusText is empty over HTTP/2 anyway.
   const error = await response.json().catch(() => ({}));
   if (isKeyUnusable(response.status, error.message)) {
-    sessionStorage.removeItem('openwa_api_key');
+    clearSavedCredential();
     if (typeof window !== 'undefined') {
       window.location.assign('/');
       return new Promise<T>(() => {});
@@ -749,14 +751,11 @@ async function handleErrorResponse<T>(response: Response): Promise<T> {
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  // Get API key from sessionStorage for authentication
-  const apiKey = sessionStorage.getItem('openwa_api_key');
-
   // For FormData (file uploads) let the browser set multipart/form-data + boundary itself.
   const isFormData = options.body instanceof FormData;
   const headers: HeadersInit = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    ...credentialHeaders(),
     ...options.headers,
   };
 
@@ -775,9 +774,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 /** Like {@link request} but returns the raw response text — e.g. a plugin's HTML config-UI bundle. */
 async function requestText(endpoint: string): Promise<string> {
-  const apiKey = sessionStorage.getItem('openwa_api_key');
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+    headers: credentialHeaders(),
   });
 
   if (!response.ok) {
@@ -791,11 +789,8 @@ async function requestText(endpoint: string): Promise<string> {
 async function requestBlob(endpoint: string): Promise<Blob> {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  // Get API key from sessionStorage for authentication
-  const apiKey = sessionStorage.getItem('openwa_api_key');
-
   const headers: HeadersInit = {
-    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    ...credentialHeaders(),
   };
 
   const response = await fetch(url, { headers });
@@ -1040,6 +1035,12 @@ export const apiKeyApi = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+  setDashboardUser: (id: string, data: { username: string; password?: string }) =>
+    request<{ username: string }>(`/auth/api-keys/${id}/dashboard-user`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  removeDashboardUser: (id: string) => request<void>(`/auth/api-keys/${id}/dashboard-user`, { method: 'DELETE' }),
   delete: (id: string) => request<void>(`/auth/api-keys/${id}`, { method: 'DELETE' }),
   revoke: (id: string) => request<ApiKey>(`/auth/api-keys/${id}/revoke`, { method: 'POST' }),
 };
