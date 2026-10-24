@@ -49,9 +49,9 @@ function AppContent() {
   // refreshes with a saved key only.
   const [savedCredential] = useState(() => readSavedCredential());
   const [isAuthenticated, setIsAuthenticated] = useState(!!savedCredential);
-  const { setRole, role, setEngineType } = useRole();
+  const { setRole, role, setEngineType, setScoped, scoped } = useRole();
 
-  const handleLogin = (credential: AuthCredential, validatedRole?: string, engineType?: string) => {
+  const handleLogin = (credential: AuthCredential, validatedRole?: string, engineType?: string, scoped = false) => {
     saveCredential(credential);
 
     // The login page's validate response already carried the role, so no second /auth/validate
@@ -59,6 +59,7 @@ function AppContent() {
     // least-privileged default.
     setRole(isUserRole(validatedRole) ? validatedRole : 'viewer');
     setEngineType(engineType ?? null);
+    setScoped(scoped);
 
     setIsAuthenticated(true);
   };
@@ -67,12 +68,13 @@ function AppContent() {
     setIsAuthenticated(false);
     setRole(null);
     setEngineType(null);
+    setScoped(false);
     clearSavedCredential();
     // Wipe the React Query cache too: it is keyed by resource, not actor, so without a full
     // clear a logout → login in the same tab with a different key/scope shows the previous
     // actor's sessions/messages/apiKeys/audit rows.
     clearActorState(queryClient);
-  }, [setRole, setEngineType]);
+  }, [setRole, setEngineType, setScoped]);
 
   // Re-validate and refresh the role on mount if already authenticated
   useEffect(() => {
@@ -92,6 +94,7 @@ function AppContent() {
           handleLogout();
         } else if (decision.action === 'role') {
           setRole(decision.role);
+          setScoped(decision.scoped);
           if (decision.engineType) setEngineType(decision.engineType);
         }
       })
@@ -99,7 +102,7 @@ function AppContent() {
         // Network failure (API unreachable): keep the cached role so a transient outage at
         // page load doesn't eject the user — an explicit 401/403 above still logs out.
       });
-  }, [savedCredential, setRole, setEngineType, handleLogout]);
+  }, [savedCredential, setRole, setEngineType, setScoped, handleLogout]);
 
   const loadingFallback = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
@@ -126,11 +129,11 @@ function AppContent() {
               <Route path="chats" element={<Chats />} />
               <Route path="webhooks" element={<Webhooks />} />
               <Route path="templates" element={<Templates />} />
-              {role === 'admin' && <Route path="api-keys" element={<ApiKeys />} />}
+              {role === 'admin' && !scoped && <Route path="api-keys" element={<ApiKeys />} />}
               {role === 'admin' && <Route path="logs" element={<Logs />} />}
               <Route path="message-tester" element={<MessageTester />} />
-              {role === 'admin' && <Route path="infrastructure" element={<Infrastructure />} />}
-              {role === 'admin' && <Route path="plugins" element={<Plugins />} />}
+              {role === 'admin' && !scoped && <Route path="infrastructure" element={<Infrastructure />} />}
+              {role === 'admin' && !scoped && <Route path="plugins" element={<Plugins />} />}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

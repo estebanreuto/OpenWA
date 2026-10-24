@@ -9,7 +9,7 @@ import type { AuthCredential } from '../utils/authStorage';
 import './Login.css';
 
 interface LoginProps {
-  onLogin: (credential: AuthCredential, role?: string, engineType?: string) => void;
+  onLogin: (credential: AuthCredential, role?: string, engineType?: string, scoped?: boolean) => void;
 }
 
 export function Login({ onLogin }: LoginProps) {
@@ -106,7 +106,7 @@ export function Login({ onLogin }: LoginProps) {
       if (response.ok) {
         // The validate body already carries the key's role — hand it up so the app can set it
         // directly instead of re-validating the same key a second time.
-        const data: { role?: string; engineType?: string } = await response.json().catch(() => ({}));
+        const data: { role?: string; engineType?: string; scoped?: unknown } = await response.json().catch(() => ({}));
         const configResponse = await fetch(`${API_BASE_URL}/auth/dashboard-config`);
         const config = configResponse.ok ? await configResponse.json() : null;
         if (data.role === 'admin' && config?.passwordLoginEnabled !== true) {
@@ -121,10 +121,14 @@ export function Login({ onLogin }: LoginProps) {
           { type: 'apiKey', value: key, rememberMe },
           data.role,
           typeof data.engineType === 'string' ? data.engineType : undefined,
+          data.scoped === true,
         );
       } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.message || t('login.invalidKey'));
+        // A 5xx, or a body that is not the gateway's JSON (a proxy error page while it restarts), says
+        // nothing about the key; a refusal keeps the gateway's reason (expired, revoked, rate limited).
+        const errorData: { message?: unknown } = await response.json().catch(() => ({}));
+        const reason = response.status < 500 && typeof errorData.message === 'string' ? errorData.message : '';
+        setError(reason || t(response.status === 401 ? 'login.invalidKey' : 'login.connectionError'));
       }
     } catch {
       setError(t('login.connectionError'));
