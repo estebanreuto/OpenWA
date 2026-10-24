@@ -100,7 +100,7 @@ describe('bannerKeyLine (startup banner key masking)', () => {
     const line = bannerKeyLine(FULL, false);
     expect(line).not.toContain('0123456789abcdef'); // the secret tail must not appear
     expect(line.startsWith('owa_k1_0')).toBe(true); // a short fingerprint is fine
-    expect(line).toMatch(/data\/\.api-key/); // points the operator to the real source
+    expect(line).toMatch(/data[\\/]\.api-key/); // points the operator to the real source
     expect(line).not.toContain('dashboard'); // the dashboard only ever shows a key's prefix
   });
 
@@ -1206,7 +1206,7 @@ describe('AuthService', () => {
       await service.onModuleInit();
 
       expect(unlinkSpy).not.toHaveBeenCalled();
-      expect(bannerText()).toMatch(/\(full key in \S*data\/\.api-key\)/);
+      expect(bannerText()).toMatch(/\(full key in \S*data[\\/]\.api-key\)/);
     });
   });
 

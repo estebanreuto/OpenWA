@@ -23,7 +23,38 @@ before(async () => {
 
 beforeEach(() => {
   navigations.length = 0;
+  localStorage.clear();
+  sessionStorage.clear();
   sessionStorage.setItem('openwa_api_key', 'stored-key');
+});
+
+test('a late refusal for a password session keeps the newly signed-in session', async () => {
+  sessionStorage.clear();
+  localStorage.setItem('openwa_dashboard_session', 'old-session');
+  let finish!: (response: Response) => void;
+  let sentHeaders: Headers | undefined;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    sentHeaders = new Headers(init?.headers);
+    return new Promise<Response>(resolve => {
+      finish = resolve;
+    });
+  }) as typeof fetch;
+  const call = sessionApi.list();
+  assert.equal(sentHeaders?.get('X-OpenWA-Session'), 'old-session');
+  localStorage.setItem('openwa_dashboard_session', 'new-session');
+  finish(new Response(JSON.stringify({ message: 'Dashboard session is invalid or expired' }), { status: 401 }));
+  await assert.rejects(call, { status: 401 });
+  assert.equal(localStorage.getItem('openwa_dashboard_session'), 'new-session');
+  assert.deepEqual(navigations, []);
+});
+
+test('an expired remembered password session clears its credential and returns to login', async () => {
+  sessionStorage.clear();
+  localStorage.setItem('openwa_dashboard_session', 'expired-session');
+  answer(401, 'Dashboard session is invalid or expired');
+  assert.equal(await settled(sessionApi.list()), false);
+  assert.equal(localStorage.getItem('openwa_dashboard_session'), null);
+  assert.deepEqual(navigations, ['/']);
 });
 
 function answer(status: number, message: string): void {

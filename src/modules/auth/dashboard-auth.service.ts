@@ -73,7 +73,7 @@ export class DashboardAuthService {
     password: string,
     rememberMe: boolean,
     clientIp?: string,
-  ): Promise<{ token: string; expiresAt: string; role: string }> {
+  ): Promise<{ token: string; expiresAt: string; role: string; scoped: boolean }> {
     const credential = await this.credentials.findOneBy({ username: username.trim() });
     if (!credential) throw new UnauthorizedException('Invalid username or password');
     const suppliedHash = await this.hashPassword(password, credential.passwordSalt);
@@ -92,7 +92,12 @@ export class DashboardAuthService {
     const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');
     const unsigned = `${TOKEN_PREFIX}${encoded}`;
     const signature = this.sign(unsigned, credential.sessionSecret);
-    return { token: `${unsigned}.${signature}`, expiresAt: expiresAt.toISOString(), role: key.role };
+    return {
+      token: `${unsigned}.${signature}`,
+      expiresAt: expiresAt.toISOString(),
+      role: key.role,
+      scoped: (key.allowedSessions?.length ?? 0) > 0,
+    };
   }
 
   async validateSession(token: string, clientIp?: string, sessionId?: string): Promise<ApiKey> {

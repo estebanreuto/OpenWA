@@ -81,11 +81,12 @@ export function Login({ onLogin }: LoginProps) {
           setError(errorData.message || t('login.invalidCredentials'));
           return;
         }
-        const data: { token: string; role?: string; engineType?: string } = await response.json();
+        const data: { token: string; role?: string; engineType?: string; scoped?: unknown } = await response.json();
         onLogin(
           { type: 'dashboardSession', value: data.token, rememberMe },
           data.role,
           typeof data.engineType === 'string' ? data.engineType : undefined,
+          data.scoped === true,
         );
         return;
       }
@@ -109,7 +110,7 @@ export function Login({ onLogin }: LoginProps) {
         const data: { role?: string; engineType?: string; scoped?: unknown } = await response.json().catch(() => ({}));
         const configResponse = await fetch(`${API_BASE_URL}/auth/dashboard-config`);
         const config = configResponse.ok ? await configResponse.json() : null;
-        if (data.role === 'admin' && config?.passwordLoginEnabled !== true) {
+        if (data.role === 'admin' && data.scoped !== true && config?.passwordLoginEnabled !== true) {
           setSetupKey(key);
           setSetupEngineType(typeof data.engineType === 'string' ? data.engineType : undefined);
           setSetupUsername('admin');

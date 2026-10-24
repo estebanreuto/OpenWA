@@ -829,6 +829,7 @@ async function requestText(endpoint: string): Promise<string> {
 /** Like {@link request} but returns a Blob — e.g. for status media downloads. */
 async function requestBlob(endpoint: string, signal?: AbortSignal): Promise<Blob> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const sentCredential = readSavedCredential();
 
   const headers: HeadersInit = {
     ...credentialHeaders(sentCredential),

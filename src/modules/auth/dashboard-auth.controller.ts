@@ -73,7 +73,7 @@ export class DashboardAuthController {
   async login(
     @Body() dto: DashboardLoginDto,
     @Req() req: Request,
-  ): Promise<{ token: string; expiresAt: string; role: string; engineType: string }> {
+  ): Promise<{ token: string; expiresAt: string; role: string; engineType: string; scoped: boolean }> {
     const trustedProxies = this.configService.get<string[]>('security.trustedProxies') ?? [];
     const clientIp = resolveClientIp(req, trustedProxies);
     const session = await this.dashboardAuth.login(dto.username, dto.password, dto.rememberMe === true, clientIp);
