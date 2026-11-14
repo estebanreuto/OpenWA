@@ -190,6 +190,8 @@ async function signIn(apiKey: string): Promise<void> {
   const { screen, waitFor, fireEvent } = rtl;
   const input = await screen.findByLabelText('API Key');
   fireEvent.change(input, { target: { value: apiKey } });
+  // These lifecycle cases explicitly verify a tab-only credential.
+  fireEvent.click(screen.getByRole('checkbox'));
   fireEvent.submit(input.closest('form')!);
   await waitFor(() => assert.ok(sessionStorage.getItem(ROLE_KEY), 'expected a role to be stored after sign-in'));
   // Give the post-login render and its effects a macrotask to fire before counting requests.

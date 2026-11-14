@@ -29,6 +29,67 @@ type HygieneLogger = Pick<LoggerService, 'debug' | 'log'>;
  * logs at debug, so the sweep can never block an engine start.
  */
 export async function killOrphanedChromiumProcesses(sessionId: string, logger: HygieneLogger): Promise<void> {
+  if (process.platform === 'win32') {
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(chrome|chromium)(\\.exe)?$' -and $_.CommandLine } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress",
+          ],
+          { maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+          (error, stdout) => {
+            if (error) reject(error instanceof Error ? error : new Error(error.message));
+            else resolve(stdout);
+          },
+        );
+      });
+      const processes = JSON.parse(output || '[]') as
+        | Array<{ Name?: string; ProcessId?: number; CommandLine?: string }>
+        | {
+            Name?: string;
+            ProcessId?: number;
+            CommandLine?: string;
+          };
+      const rows = Array.isArray(processes) ? processes : [processes];
+      const marker = `--openwa-session=${sessionId}`;
+      const escapedMarker = marker.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+      const markerRe = new RegExp('(?:^|\\s)' + escapedMarker + '(?=\\s|$|")');
+      const killedPids: number[] = [];
+      for (const row of rows) {
+        const pid = Number(row.ProcessId);
+        if (
+          !/^(chrome|chromium)(\.exe)?$/i.test(row.Name ?? '') ||
+          !Number.isSafeInteger(pid) ||
+          pid <= 0 ||
+          pid === process.pid ||
+          !markerRe.test(row.CommandLine ?? '')
+        ) {
+          continue;
+        }
+        await new Promise<void>(resolve => {
+          execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, error => {
+            if (error) logger.debug(`Could not stop orphaned Chromium pid ${pid}`, { error: error.message });
+            else killedPids.push(pid);
+            resolve();
+          });
+        });
+      }
+      if (killedPids.length > 0) {
+        logger.log(
+          `Stopped ${killedPids.length} orphaned Chromium process(es) left over from a previous process lifetime`,
+          { sessionId, pids: killedPids },
+        );
+      }
+    } catch (error) {
+      logger.debug('Could not enumerate orphaned Chromium processes', { error: String(error) });
+    }
+    return;
+  }
+
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
     logger.debug(`Skipping orphaned Chromium sweep: unsupported platform ${process.platform}`);
     return;

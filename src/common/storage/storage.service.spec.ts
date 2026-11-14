@@ -64,6 +64,15 @@ describe('StorageService (local) path traversal protection', () => {
     expect(fs.readFileSync(path.join(localPath, 'sub/ok.txt'), 'utf8')).toBe('hi');
   });
 
+  it('enumerates nested keys with forward slashes for database and S3 compatibility', async () => {
+    await service.putFile('statuses/session-1/photo.jpg', Buffer.from('image'));
+    expect(await service.listFiles()).toEqual(['statuses/session-1/photo.jpg']);
+    const keys: string[] = [];
+    for await (const key of service.iterateFiles('statuses/')) keys.push(key);
+    expect(keys).toEqual(['statuses/session-1/photo.jpg']);
+    expect(await service.getFile(keys[0])).toEqual(Buffer.from('image'));
+  });
+
   it('rejects writing a file outside the storage root', async () => {
     await expect(service.putFile('../escape.txt', Buffer.from('x'))).rejects.toThrow();
     expect(fs.existsSync(path.join(baseDir, 'escape.txt'))).toBe(false);

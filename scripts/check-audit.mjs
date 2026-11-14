@@ -48,6 +48,15 @@ export function auditUnavailable(report) {
   return report == null || typeof report !== 'object' || 'error' in report;
 }
 
+// npm is a .cmd shim on Windows, which execFileSync cannot launch directly. npm supplies the
+// actual CLI path when this gate is run with npm run check:audit; invoke it through Node, without
+// a shell. Keep the normal executable on POSIX (including the test harness's PATH shim).
+export function auditInvocation(platform = process.platform, npmCli = process.env.npm_execpath) {
+  return platform === 'win32' && npmCli
+    ? { command: process.execPath, args: [npmCli, 'audit', '--json'] }
+    : { command: 'npm', args: ['audit', '--json'] };
+}
+
 /**
  * `npm audit --json` exits non-zero exactly when it found something, so a throw is the normal path
  * and the payload is on stdout either way. Unparseable output, or an `{ error }` payload, means the
@@ -56,7 +65,8 @@ export function auditUnavailable(report) {
 function runAuditOnce() {
   let raw;
   try {
-    raw = execFileSync('npm', ['audit', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const { command, args } = auditInvocation();
+    raw = execFileSync(command, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   } catch (err) {
     raw = err?.stdout ?? '';
     if (!raw) return { error: { summary: err?.stderr?.trim() || err?.message || 'npm audit produced no output' } };

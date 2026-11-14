@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createElement } from 'react';
+import type { AuthCredential } from '../utils/authStorage.ts';
 
 let sentKey: string | null = null;
 let reply: () => Response = okReply;
@@ -20,6 +21,11 @@ function okReply(): Response {
 
 function installFetchStub(): void {
   globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    if (String(_input).endsWith('/auth/dashboard-config')) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ passwordLoginEnabled: true }), { headers: { 'Content-Type': 'application/json' } }),
+      );
+    }
     sentKey = new Headers(init?.headers).get('X-API-Key');
     return Promise.resolve(reply());
   }) as typeof fetch;
@@ -48,14 +54,14 @@ afterEach(() => {
 
 test('a key pasted with surrounding whitespace is sent and stored trimmed', async () => {
   const { screen, fireEvent, waitFor } = rtl;
-  const logins: string[] = [];
-  rtl.render(createElement(Login, { onLogin: (key: string) => logins.push(key) }));
+  const logins: AuthCredential[] = [];
+  rtl.render(createElement(Login, { onLogin: credential => logins.push(credential) }));
 
   fireEvent.change(screen.getByLabelText('API Key'), { target: { value: '  owa_k1_secret ' } });
   fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
   await waitFor(() => assert.equal(logins.length, 1));
-  assert.deepEqual(logins, ['owa_k1_secret']);
+  assert.deepEqual(logins, [{ type: 'apiKey', value: 'owa_k1_secret', rememberMe: true }]);
   assert.equal(sentKey, 'owa_k1_secret');
 });
 

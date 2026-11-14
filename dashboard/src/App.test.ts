@@ -140,6 +140,8 @@ test('a startup validation that lands after a sign-in with another key is ignore
       return field;
     });
     rtl.fireEvent.change(input, { target: { value: 'new-viewer-key' } });
+    // Keep this sign-in in sessionStorage; the new form remembers credentials by default.
+    rtl.fireEvent.click(rtl.screen.getByRole('checkbox'));
     rtl.fireEvent.submit(input.closest('form')!);
     await rtl.waitFor(() => assert.ok(document.querySelector('a[href="/sessions"]')));
     assert.equal(logsLink() === null, true, 'the Logs nav entry is shown to a viewer');

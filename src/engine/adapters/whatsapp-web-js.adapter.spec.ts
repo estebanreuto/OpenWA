@@ -5966,7 +5966,7 @@ describe('WhatsAppWebJsAdapter inbound media measured in the page', () => {
       config: { compilerOptions: Record<string, unknown> };
     };
     const { options } = ts.convertCompilerOptionsFromJson({ ...config.compilerOptions, module: 'CommonJS' }, root);
-    const file = fs.readFileSync(path.join(__dirname, 'wwebjs-messaging.ts'), 'utf8');
+    const file = fs.readFileSync(path.join(__dirname, 'wwebjs-messaging.ts'), 'utf8').replace(/\r\n/g, '\n');
     const start = file.indexOf('async function downloadMediaInPage');
     expect(start).toBeGreaterThan(-1);
     const compiled = ts.transpileModule(file.slice(start, file.indexOf('\n}\n', start) + 2), {
@@ -6024,7 +6024,7 @@ describe('WhatsAppWebJsAdapter inbound media measured in the page', () => {
       'type:msg.type,signal:',
     );
     const upstream = method.slice(method.indexOf('async(msgId)=>'), method.indexOf('},this.id._serialized'));
-    const ours = fs.readFileSync(path.join(__dirname, 'wwebjs-messaging.ts'), 'utf8');
+    const ours = fs.readFileSync(path.join(__dirname, 'wwebjs-messaging.ts'), 'utf8').replace(/\r\n/g, '\n');
     const fn = ours.slice(ours.indexOf('export async function downloadMediaInPage'));
     const own = squash(fn.slice(0, fn.indexOf('\n}\n'))).split('const collection=')[1] ?? '';
     const members = (src: string) => [...new Set([...src.matchAll(/(?<!\.)\.([A-Za-z_]\w*)/g)].map(m => m[1]))].sort();
@@ -6658,6 +6658,7 @@ describe('WhatsAppWebJsAdapter orphaned Chromium sweep (pre-launch)', () => {
   let rmSpy: jest.SpyInstance;
   let clientInitSpy: jest.SpyInstance;
   let savedWebVersion: string | undefined;
+  let savedPlatform: PropertyDescriptor;
 
   // execFile is overloaded, so spy through a structural shape like the Client.prototype spies above.
   // The adapter invokes it as execFile('ps', args, opts, callback); the callback is always last.
@@ -6675,6 +6676,9 @@ describe('WhatsAppWebJsAdapter orphaned Chromium sweep (pre-launch)', () => {
   };
 
   beforeEach(() => {
+    // Keep the shared orphan-sweep tests deterministic on every development OS.
+    savedPlatform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+    Object.defineProperty(process, 'platform', { value: 'linux' });
     // Keep initialize() offline: 'off' skips the wa-version registry fetch in resolveWebVersionPin.
     savedWebVersion = process.env.WWEBJS_WEB_VERSION;
     process.env.WWEBJS_WEB_VERSION = 'off';
@@ -6698,6 +6702,7 @@ describe('WhatsAppWebJsAdapter orphaned Chromium sweep (pre-launch)', () => {
     killSpy.mockRestore();
     rmSpy.mockRestore();
     clientInitSpy.mockRestore();
+    Object.defineProperty(process, 'platform', savedPlatform);
     if (savedWebVersion === undefined) {
       delete process.env.WWEBJS_WEB_VERSION;
     } else {
@@ -6820,16 +6825,44 @@ describe('WhatsAppWebJsAdapter orphaned Chromium sweep (pre-launch)', () => {
     expect(killSpy).toHaveBeenCalledWith(1803, 'SIGKILL');
   });
 
-  it('skips the sweep on platforms other than darwin/linux (no ps, no kill)', async () => {
+  it('stops only this session orphaned Chromium tree on Windows', async () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
     Object.defineProperty(process, 'platform', { value: 'win32' });
+    const marker = `--openwa-session=${SESSION_ID}`;
+    execFileSpy.mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (args[0] === 'powershell.exe') {
+        cb(
+          null,
+          JSON.stringify([
+            { Name: 'chrome.exe', ProcessId: 1801, CommandLine: `chrome.exe --headless ${marker}` },
+            {
+              Name: 'chrome.exe',
+              ProcessId: 1802,
+              CommandLine: `chrome.exe --headless --openwa-session=${SESSION_ID}-other`,
+            },
+            { Name: 'node.exe', ProcessId: 1803, CommandLine: `node.exe ${marker}` },
+          ]),
+          '',
+        );
+      } else {
+        cb(null, '', '');
+      }
+    });
     try {
       await newAdapter().initialize({});
     } finally {
       Object.defineProperty(process, 'platform', platform);
     }
 
-    expect(execFileSpy).not.toHaveBeenCalled();
+    expect(execFileSpy).toHaveBeenCalledTimes(2);
+    expect(execFileSpy).toHaveBeenNthCalledWith(
+      2,
+      'taskkill.exe',
+      ['/PID', '1801', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true }),
+      expect.any(Function),
+    );
     expect(killSpy).not.toHaveBeenCalled();
   });
 

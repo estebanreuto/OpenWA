@@ -53,7 +53,9 @@ export async function* iterateLocalFiles(localPath: string, prefix = ''): AsyncG
     }
 
     for (const entry of entries) {
-      const relativePath = dir ? path.join(dir, entry.name) : entry.name;
+      // Storage keys use '/' on every OS, matching database mediaPath values and S3 keys.
+      // Native Windows separators otherwise hide these files from prefix-based orphan sweeps.
+      const relativePath = dir ? path.posix.join(dir, entry.name) : entry.name;
       if (entry.isDirectory()) {
         queue.push({ dir: relativePath, depth: depth + 1 });
       } else if (entry.isFile()) {

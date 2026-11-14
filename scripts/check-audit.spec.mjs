@@ -5,7 +5,22 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditUnavailable, collectAdvisories, evaluate, unavailableOutcome } from './check-audit.mjs';
+import { auditInvocation, auditUnavailable, collectAdvisories, evaluate, unavailableOutcome } from './check-audit.mjs';
+
+test('Windows invokes the npm CLI through Node without a command shell', () => {
+  const cli = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+  assert.deepEqual(auditInvocation('win32', cli), {
+    command: process.execPath,
+    args: [cli, 'audit', '--json'],
+  });
+});
+
+test('POSIX keeps the npm executable on PATH', () => {
+  assert.deepEqual(auditInvocation('linux', '/usr/lib/node_modules/npm/bin/npm-cli.js'), {
+    command: 'npm',
+    args: ['audit', '--json'],
+  });
+});
 
 /**
  * The report shape is taken from a real `npm audit --json` run, not invented: one advisory
